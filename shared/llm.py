@@ -25,7 +25,6 @@ def get_llm(temperature: float = 0.1) -> BaseChatModel:
         return ChatAnthropic(
             model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-5"),
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
-            temperature=temperature
         )
 
     if provider == "ollama":

@@ -9,6 +9,7 @@ from langgraph.graph import StateGraph, START, END
 
 from shared.llm import get_llm
 from shared.telemetry import TelemetryCallback
+from src.privacy import HistoryStorage, redact_pii
 from src.state import VerificationState, StateValidationError, validate_state, SAFE_FALLBACK_RESPONSE
 from src.tools.adapter import ToolRegistry
 from src.scoring import compute_risk_score, score_to_band, should_escalate
@@ -270,7 +271,7 @@ def run_verification(user_input: str) -> dict:
 
         logger.info("[telemetry] run_id=%s %s", run_id, telemetry.summary())
 
-        return format_response(
+        formatted = format_response(
             risk_level=result["risk_level"],
             reasons=result["reasons"],
             next_step=result["next_step"],
@@ -278,6 +279,16 @@ def run_verification(user_input: str) -> dict:
             escalate=result["escalate"],
             confidence=result["confidence"],
         )
+
+        HistoryStorage().save(run_id, {
+            "input_type": input_type,
+            "risk_level": formatted["risk_level"],
+            "confidence": formatted["confidence"],
+            "escalate": formatted["escalate"],
+            "input_redacted": redact_pii(user_input[:500]),
+        })
+
+        return formatted
 
     except Exception as exc:
         logger.exception("Verification pipeline failed: %s", exc)

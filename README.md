@@ -144,6 +144,62 @@ python -m pytest tests/ -v
 
 ---
 
+### Running a live pilot and collecting metrics
+
+#### 1. Configure `.env`
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...       # required — your Anthropic key
+HISTORY_CONSENT=true               # enables per-run JSON records in data/history/
+HISTORY_RETENTION_DAYS=30          # records older than this are removed by cleanup()
+LOG_LEVEL=INFO                     # prints telemetry summary (tokens, cost, latency) after each run
+```
+
+#### 2. Run checks against real inputs
+
+```bash
+# Scam / phishing text
+python main.py "URGENT: Your account has been suspended. Click now to verify."
+
+# Health misinformation
+python main.py "Scientists say daily coffee reduces Alzheimer's risk by 65%"
+
+# Real news article URL
+python main.py "https://www.bbc.co.uk/news/..."
+
+# Personal-data harvesting
+python main.py "Enter your NI number to claim your government refund"
+```
+
+Each run writes a JSON record to `data/history/` containing `run_id`, `risk_level`, `confidence`, `escalate`, `input_type`, and the PII-redacted input. The telemetry summary (LLM calls, tokens, estimated cost) is printed to the console at `INFO` level.
+
+#### 3. Review pilot records
+
+```bash
+python3 -c "
+import json
+from pathlib import Path
+
+records = [json.loads(f.read_text()) for f in sorted(Path('data/history').glob('*.json'))]
+print(f'Total runs: {len(records)}')
+print()
+for r in records:
+    flag = '⚠' if r['escalate'] else ' '
+    print(f\"{flag} {r['risk_level']:<6}  {int(r['confidence']*100):>3}%  {r['input_redacted'][:60]}\")
+"
+```
+
+#### 4. HTML output
+
+The formatted response dict can also be rendered as a self-contained HTML page via `render_html()` in `src/formatter.py`. To write an HTML file for a run, add to `main.py`:
+
+```python
+from src.formatter import render_html
+Path("result.html").write_text(render_html(response))
+```
+
+---
+
 ### Tech stack
 
 | Layer | Choice |
