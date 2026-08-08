@@ -1,2 +1,8 @@
 .pytest_cache/
-.env/
+# Python environment and cache
+venv/
+__pycache__/
+*.pyc
+
+# Local credentials
+.env

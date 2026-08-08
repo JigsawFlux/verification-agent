@@ -173,13 +173,15 @@ verification-agent/
 │
 ├── src/
 │   ├── state.py                # VerificationState TypedDict + Pydantic validation
-│   ├── fetcher.py              # URL → extracted page text
+│   ├── fetcher.py              # URL → FetchResult (SSRF-safe, content-type gated, 500 KB cap)
 │   ├── loop.py                 # LangGraph agent graph (Plan→Execute→Adapt→Follow-up)
 │   ├── scoring.py              # weighted multi-signal scoring + risk banding
 │   ├── formatter.py            # 4-block response contract enforcement
 │   ├── next_steps.py           # context-aware next-step guidance selector
+│   ├── privacy.py              # PII redaction + consent-gated history storage
 │   └── tools/
 │       ├── adapter.py          # ToolRegistry — stable interface for all tools
+│       ├── _shared.py          # shared JSON extraction, bool coercion, float clamping
 │       ├── source_credibility.py
 │       ├── manipulation_language.py
 │       ├── cross_check.py
@@ -190,11 +192,18 @@ verification-agent/
 │   └── telemetry.py            # token count, latency, cost tracking
 │
 └── tests/
+    ├── conftest.py             # FakeLLM / FakeResp stubs shared across all tool tests
     ├── test_state.py
     ├── test_scoring.py
     ├── test_tools.py
     ├── test_scenarios.py       # 5 seeded scenario tests
-    └── test_response.py        # 4-block response contract tests
+    ├── test_response.py        # 4-block response contract tests
+    ├── test_source_credibility.py  # JSON extraction, sanitise, bool coercion
+    ├── test_manipulation_language.py
+    ├── test_cross_check_claims.py
+    ├── test_privacy_risk.py
+    ├── test_fetcher.py         # SSRF, content-type, size cap, redirect validation
+    └── test_privacy.py         # PII redaction, consent-gated storage, cleanup
 ```
 
 ---
@@ -341,6 +350,92 @@ Each tool is registered in `ToolRegistry` via the `@register` decorator. The ada
 
 All tools are powered by Claude via structured JSON prompts. Each tool returns a `risk_contribution` float (0.0–1.0) that feeds the scoring engine.
 
+#### Shared tool hardening (`src/tools/_shared.py`)
+
+All four tools import parsing utilities from a single canonical module, eliminating duplication and ensuring consistent behaviour:
+
+- **`_extract_json(raw)`** — three-path extraction: fenced ` ```json ``` ` block (non-greedy), bare array guard (returns as-is so non-dict check fires), then `JSONDecoder().raw_decode()` loop that finds the first syntactically complete `{…}` object in prose without greedy regex.
+- **`_as_bool(value, fallback)`** — handles `bool`, string variants (`"true"/"false"/"yes"/"no"/"1"/"0"`), and `None`; prevents `bool("false") == True`.
+- **`_clamp01(value, fallback)`** — casts to `float` and clamps to `[0.0, 1.0]`; returns `fallback` on non-numeric input.
+
+Each tool also defines its own `_default_result()` and `_sanitize()` functions, which perform field-by-field validation — enum checks for string fields, clamping for floats, `_as_bool` for booleans — before returning to the orchestrator. Parse failures always resolve to the safe default dict rather than raising.
+
+---
+
+### URL fetcher hardening (`src/fetcher.py`)
+
+`prepare_content()` now returns a `FetchResult` dataclass instead of a plain string, giving the loop structured metadata about every fetch:
+
+```python
+@dataclass
+class FetchResult:
+    success: bool
+    content: str           # extracted text (empty on failure)
+    url_sanitized: str     # query params and fragment stripped — safe to log
+    input_type: str        # "url" | "text"
+    status_code: int | None
+    content_type: str | None
+    truncated: bool
+    error_reason: str | None   # one of the ERR_* sentinel strings
+    fetch_latency_ms: float | None
+```
+
+Security controls applied before any HTTP connection is made:
+
+| Control | Detail |
+| --- | --- |
+| SSRF protection | `socket.getaddrinfo` resolves the hostname; every resolved IP is checked against `ip.is_global` and an explicit RFC 1918 / loopback / link-local / CGNAT blocklist |
+| `localhost` short-circuit | Blocked by name before DNS, preventing bypass via system resolver |
+| Redirect validation | Redirects are followed manually (up to 3 hops); each `Location` URL is re-validated through the full SSRF check before following |
+| Content-type allowlist | Only `text/html` and `text/plain` are accepted; PDFs, JSON APIs, images, etc. return `ERR_BAD_CONTENT_TYPE` before any body is read |
+| Body size cap | Response body is streamed with `iter_content`; reading stops at 500 KB (`_MAX_CONTENT_BYTES`); `FetchResult.truncated` is set |
+| Safe logging | `_safe_url()` strips query strings and fragments from all log lines so tokens, session IDs, and PII in URLs are never logged |
+
+On fetch failure, the loop passes `[Content unavailable: <reason>]` to the tools so they can still produce a conservative risk assessment rather than silently returning no result.
+
+---
+
+### PII redaction and history storage (`src/privacy.py`)
+
+#### `redact_pii(text) → str`
+
+Applies regex-based redaction for UK-centric PII patterns before any text is persisted:
+
+| Pattern | Replacement |
+| --- | --- |
+| UK National Insurance number (e.g. `AB123456C`) | `[NI_NUMBER]` |
+| Payment card (4 × 4 digits, optional separators) | `[CARD_NUMBER]` |
+| Email address | `[EMAIL]` |
+| UK phone (`+44` or `0` prefix) | `[PHONE]` |
+| 8-digit bank account number | `[ACCOUNT_NUMBER]` |
+
+Note: the phone pattern uses `(?<!\w)` instead of `\b` because `+` is not a word character and `\b` would never match before it.
+
+#### `HistoryStorage`
+
+Consent-gated persistence class. `save()` returns `False` immediately when `HISTORY_CONSENT=false` (the default) — nothing is written to disk. When consent is on, records are saved as JSON files under `HISTORY_DIR`. `cleanup()` deletes files older than `HISTORY_RETENTION_DAYS`.
+
+```python
+storage = HistoryStorage(consent=True, retention_days=30)
+storage.save(run_id, redact_pii_fields(record))  # caller must redact first
+storage.cleanup()                                 # call on a schedule
+```
+
+---
+
+### Telemetry (`src/loop.py` + `shared/telemetry.py`)
+
+Each call to `run_verification()` generates a UUID `run_id` and attaches a `TelemetryCallback` to the LangGraph run via `RunnableConfig`:
+
+```python
+run_id = str(uuid.uuid4())
+telemetry = TelemetryCallback()
+result = app.invoke(initial, config=RunnableConfig(callbacks=[telemetry], run_name=f"verify-{run_id[:8]}"))
+logger.info("[telemetry] run_id=%s %s", run_id, telemetry.summary())
+```
+
+`TelemetryCallback.summary()` returns LLM call count, input/output tokens, estimated cost (USD), and total LLM latency for the run. Set `LOG_LEVEL=INFO` to see these in the console output.
+
 ---
 
 ### Scoring engine
@@ -398,9 +493,11 @@ If `escalate` is true, the output also shows `⚠️ NEEDS HUMAN VERIFICATION`.
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic provider |
 | `LLM_PROVIDER` | `anthropic` | `anthropic` or `ollama` |
 | `CLAUDE_MODEL` | `claude-sonnet-5` | Model ID |
-| `LOG_LEVEL` | `WARNING` | Set to `DEBUG` to see phase log and telemetry |
+| `LOG_LEVEL` | `WARNING` | Set to `INFO` to see telemetry; `DEBUG` for full phase log |
 | `MAX_RETRY_ON_LOW_CONFIDENCE` | `1` | Max adapter→executor retries before escalating |
-| `HISTORY_CONSENT` | `false` | Enable run history storage (privacy-gated) |
+| `HISTORY_CONSENT` | `false` | Enable run history storage — only set `true` after PII redaction is validated |
+| `HISTORY_RETENTION_DAYS` | `30` | How long history records are kept before `cleanup()` removes them |
+| `HISTORY_DIR` | `data/history` | Directory where consent-gated history JSON files are written |
 
 ---
 
@@ -410,7 +507,7 @@ If `escalate` is true, the output also shows `⚠️ NEEDS HUMAN VERIFICATION`.
 python -m pytest tests/ -v
 ```
 
-49 tests across 5 files:
+160 tests across 12 files:
 
 | File | What it covers |
 | --- | --- |
@@ -419,6 +516,12 @@ python -m pytest tests/ -v
 | `test_tools.py` | Tool registry, schema contracts, JSON parse failure fallbacks |
 | `test_scenarios.py` | 5 seeded scenarios → expected risk bands (all offline, no LLM calls) |
 | `test_response.py` | 4-block contract, CLI rendering, escalation propagation |
+| `test_source_credibility.py` | JSON extraction paths, `_sanitize` field validation, bool coercion |
+| `test_manipulation_language.py` | JSON extraction, sanitise (snippets cap, non-list guard), bool coercion |
+| `test_cross_check_claims.py` | JSON extraction, `evidence_quality` enum guard, sanitise, bool coercion |
+| `test_privacy_risk.py` | JSON extraction, sanitise, `safety_warning_text` passthrough, bool coercion |
+| `test_fetcher.py` | SSRF block (RFC 1918, loopback, AWS metadata, redirect), content-type gate, 500 KB cap, timeout, safe log URL |
+| `test_privacy.py` | PII redaction (email, NI, phone, card), idempotency, consent-gated storage, retention cleanup |
 
 ---
 
@@ -426,8 +529,7 @@ python -m pytest tests/ -v
 
 | Task | Status |
 | --- | --- |
-| PII redaction pipeline before persistence (VA-050..052) | Stubbed — implement before enabling `HISTORY_CONSENT=true` |
-| Full telemetry metrics + weekly report (VA-060..062) | Basic `logging` only; metrics pipeline deferred |
+| Full telemetry pipeline — structured per-run records + weekly report (VA-061..062) | `TelemetryCallback` wired and logs summary; structured persistence deferred |
 | Pilot KPI baseline capture (VA-080..082) | Deferred to post-pilot |
 
 ---
@@ -537,26 +639,27 @@ Verified by:
 
 ### 8) Privacy-by-default controls
 
-- [ ] Redact direct identifiers before persistence (deferred — VA-050)
+- [x] Redact direct identifiers before persistence (`src/privacy.py · redact_pii()`)
 - [x] History storage disabled unless `HISTORY_CONSENT=true`
-- [ ] Short retention window and auto-delete (deferred — VA-051)
+- [x] Short retention window and auto-delete (`HistoryStorage.cleanup()` + `HISTORY_RETENTION_DAYS`)
 
 Verified by:
 
-- [ ] PII redaction test passes for phone/email/account-like patterns (deferred)
-- [x] History storage is disabled unless consent flag is true
+- [x] PII redaction tests pass for phone, email, NI number, card number patterns (`test_privacy.py`)
+- [x] History storage is disabled when consent flag is false
+- [x] `cleanup()` removes files older than the retention window
 
 ---
 
 ### 9) Telemetry + evaluation from day one
 
 - [x] `TelemetryCallback` tracks LLM calls, token counts, latency, estimated cost
-- [ ] Per-run structured telemetry record (deferred — VA-060)
-- [ ] Disagreement review queue (deferred — VA-061)
+- [x] Per-run `run_id` (UUID) generated; telemetry summary logged at `INFO` after each run
+- [ ] Structured per-run telemetry persistence + weekly review report (deferred — VA-061..062)
 
 Verified by:
 
-- [ ] Run-level telemetry record emitted per request (deferred)
+- [x] `[telemetry] run_id=… {LLM Calls, tokens, cost, latency}` appears in `INFO` log on every run
 - [ ] Weekly review report generatable from stored metrics (deferred)
 
 ---
@@ -578,8 +681,8 @@ Verified by:
 
 MVP is complete only when all below are true:
 
-- [x] Core loop, tools, scoring, response format implemented and tested (49/49 tests pass)
+- [x] Core loop, tools, scoring, response format implemented and tested (160/160 tests pass)
 - [x] Output format is consistent and understandable to non-technical users
 - [x] No autonomous user-impacting actions are performed
-- [ ] Privacy controls and consent behaviour fully validated (PII redaction deferred)
+- [x] Privacy controls and consent behaviour fully validated (`redact_pii`, `HistoryStorage`, retention cleanup)
 - [ ] Pilot metrics collected and reviewable (deferred)
