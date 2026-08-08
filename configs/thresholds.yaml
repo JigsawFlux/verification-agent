@@ -1,0 +1,23 @@
+# Risk scoring weights (must sum to 1.0)
+weights:
+  source_credibility: 0.30
+  manipulation_language: 0.25
+  cross_check: 0.25
+  privacy_risk: 0.20
+
+# High-harm signal multipliers (applied to the tool's risk contribution)
+high_harm_multipliers:
+  impersonation: 1.5
+  payment_pressure: 1.5
+  credential_harvesting: 1.8
+  pii_solicitation: 1.4
+
+# Risk band thresholds [min, max) — score is 0.0–1.0
+bands:
+  low:    [0.0, 0.35]
+  medium: [0.35, 0.65]
+  high:   [0.65, 1.0]
+
+# Confidence rules
+confidence_floor_for_low_risk: 0.60   # confidence must exceed this to label Low
+escalation_confidence_threshold: 0.40  # below this → escalate for human review

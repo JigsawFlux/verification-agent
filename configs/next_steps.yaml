@@ -1,0 +1,22 @@
+# Safe next-step guidance by risk band
+# Each entry is a short, plain-English action for the user.
+
+low:
+  default: "This content appears reliable. You can proceed, but always verify important facts with official sources."
+  url: "This source appears credible. You may read and share, but double-check any statistics against the original data."
+
+medium:
+  default: "Exercise caution. Verify the key claims on an official website before acting or sharing."
+  missing_source: "No author or organisation was identified. Search for the claim on a trusted news site before sharing."
+  outdated: "The date or context may be out of date. Check whether this information is still current."
+  emotional_language: "The content uses strong emotional language. Pause before reacting — check a neutral source first."
+
+high:
+  default: "Do not share or act on this content yet. Check the claim on an official website or contact the organisation directly."
+  scam: "This looks like a scam. Do not click any links, share personal details, or make any payments."
+  impersonation: "This content may be impersonating a trusted organisation. Contact the real organisation through their official website."
+  payment_pressure: "Do not make any payment. Legitimate organisations do not pressure you to pay urgently online."
+  credential: "Do not enter your password, NI number, or any personal credentials. This may be a phishing attempt."
+
+escalate:
+  default: "The evidence is unclear or conflicting. This needs human verification before you act or share."
