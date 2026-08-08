@@ -164,7 +164,7 @@ The LLM provider is swappable — set `LLM_PROVIDER=ollama` in `.env` to run loc
 ```text
 verification-agent/
 ├── main.py                     # CLI entrypoint
-├─��� .env.example                # environment variable template
+├── .env.example                # environment variable template
 ├── requirements.txt
 │
 ├── configs/
@@ -214,7 +214,7 @@ The system follows the **Panel of Specialists** multi-agent pattern. A single or
 
 ```mermaid
 graph TB
-    Input["User Input\nURL or Text"] --> Fetcher["Fetcher\nsrc/fetcher.py\nURL → page text"]
+    Input["User Input\nURL or Text"] --> Fetcher["Fetcher\nsrc/fetcher.py\nURL → FetchResult"]
     Fetcher --> Planner
 
     subgraph Orchestrator["Orchestrator — src/loop.py · LangGraph StateGraph"]
@@ -417,8 +417,10 @@ Consent-gated persistence class. `save()` returns `False` immediately when `HIST
 
 ```python
 storage = HistoryStorage(consent=True, retention_days=30)
-storage.save(run_id, redact_pii_fields(record))  # caller must redact first
-storage.cleanup()                                 # call on a schedule
+# redact_pii() operates on strings — apply it to each text field before saving
+record = {"input": redact_pii(user_input), "risk_level": risk_level, ...}
+storage.save(run_id, record)
+storage.cleanup()   # call on a schedule to enforce retention
 ```
 
 ---
@@ -507,7 +509,7 @@ If `escalate` is true, the output also shows `⚠️ NEEDS HUMAN VERIFICATION`.
 python -m pytest tests/ -v
 ```
 
-160 tests across 12 files:
+160 tests across 11 test files:
 
 | File | What it covers |
 | --- | --- |
