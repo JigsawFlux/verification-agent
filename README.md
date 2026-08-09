@@ -44,19 +44,19 @@ The orchestrator manages execution across five distinct layers: ingestion, orche
 
 ```mermaid
 graph TB
-    Input(["User Input<br/><i>(URL, pasted text, or forwarded message)</i>"])
+    Input(["User Input — URL, pasted text, or forwarded message"])
     
     subgraph FetcherLayer["1. Ingestion & Security Gate"]
-        Fetcher["URL Fetcher & SSRF Gate<br/><code>src/fetcher.py</code>"]
-        SSRF["SSRF Defense<br/><i>socket.getaddrinfo + RFC1918 blocklist</i>"]
-        Sanitiser["Content Sanitiser & Cap<br/><i>500KB cap · HTML/Text allowlist</i>"]
+        Fetcher["URL Fetcher & SSRF Gate — src/fetcher.py"]
+        SSRF["SSRF Defense — socket.getaddrinfo + RFC1918 blocklist"]
+        Sanitiser["Content Sanitiser & Cap — 500KB cap · HTML/Text allowlist"]
     end
 
-    subgraph Orchestrator["2. LangGraph Orchestrator Loop — <code>src/loop.py</code>"]
-        Planner["Planner Node<br/><code>plan</code> phase · tool selection"]
-        Executor["Executor Node<br/><code>execute</code> phase · fan-out to panel"]
-        Adapter["Adapter Node<br/><code>adapt</code> phase · evidence reconciliation"]
-        Followup["Follow-up Node<br/><code>follow_up</code> phase · report synthesis"]
+    subgraph Orchestrator["2. LangGraph Orchestrator Loop — src/loop.py"]
+        Planner["Planner Node — plan phase · tool selection"]
+        Executor["Executor Node — execute phase · fan-out to panel"]
+        Adapter["Adapter Node — adapt phase · evidence reconciliation"]
+        Followup["Follow-up Node — follow_up phase · report synthesis"]
         
         Planner --> Executor
         Executor --> Adapter
@@ -64,28 +64,28 @@ graph TB
         Adapter -->|"Confidence < 0.40 (Max 1 retry)"| Executor
     end
 
-    subgraph Specialists["3. Panel of Specialist Sub-Agents — <code>src/tools/</code>"]
-        SC["Source Credibility<br/><code>source_credibility.py</code><br/><i>Author, publisher & domain track record</i>"]
-        ML["Manipulation Language<br/><code>manipulation_language.py</code><br/><i>Urgency, fear & authority pressure</i>"]
-        CC["Cross-Check Claims<br/><code>cross_check.py</code><br/><i>Consistency, dates & evidentiary basis</i>"]
-        PR["Privacy Risk<br/><code>privacy_risk.py</code><br/><i>PII harvesting & impersonation Cues</i>"]
+    subgraph Specialists["3. Panel of Specialist Sub-Agents — src/tools/"]
+        SC["Source Credibility — source_credibility.py\nAuthor, publisher & domain track record"]
+        ML["Manipulation Language — manipulation_language.py\nUrgency, fear & authority pressure"]
+        CC["Cross-Check Claims — cross_check.py\nConsistency, dates & evidentiary basis"]
+        PR["Privacy Risk — privacy_risk.py\nPII harvesting & impersonation cues"]
     end
 
-    LLM["Claude 5 Engine<br/><code>claude-sonnet-5</code><br/><i>Structured JSON outputs</i>"]
+    LLM["Claude 5 Engine — claude-sonnet-5\nStructured JSON outputs"]
 
     subgraph DecisionEngine["4. Decision & Guidance Engine"]
-        Scoring["Scoring Engine<br/><code>src/scoring.py</code><br/><i>Weighted risk band calculation</i>"]
-        Multipliers["High-Harm Multipliers<br/><code>configs/thresholds.yaml</code><br/><i>Credential/payment amplification</i>"]
-        NextSteps["Next Steps Guidance<br/><code>configs/next_steps.yaml</code><br/><i>Contextual user advice</i>"]
-        PIIRedact["Privacy & Redaction<br/><code>src/privacy.py</code><br/><i>UK PII Regex + Consent storage</i>"]
+        Scoring["Scoring Engine — src/scoring.py\nWeighted risk score calculation"]
+        Multipliers["High-Harm Multipliers — configs/thresholds.yaml\nCredential & payment amplification"]
+        NextSteps["Next Steps Guidance — configs/next_steps.yaml\nContextual user advice"]
+        PIIRedact["Privacy & Redaction — src/privacy.py\nUK PII Regex + Consent storage"]
     end
 
-    subgraph OutputContract["5. UX Output Contract — <code>src/formatter.py</code>"]
-        Block1["1. Risk Band <code>(Low / Medium / High)</code>"]
-        Block2["2. Trust Summary <code>(1-2 sentences)</code>"]
-        Block3["3. Top 3 Reasons <code>(Plain English)</code>"]
-        Block4["4. Suggested Next Step <code>(User Action)</code>"]
-        Escalation["Escalation Flag <code>(Needs Human Verification)</code>"]
+    subgraph OutputContract["5. UX Output Contract — src/formatter.py"]
+        Block1["1. Risk Band (Low / Medium / High)"]
+        Block2["2. Trust Summary (1-2 sentences)"]
+        Block3["3. Top 3 Reasons (Plain English)"]
+        Block4["4. Suggested Next Step (User Action)"]
+        Escalation["Escalation Flag (Needs Human Verification)"]
     end
 
     %% Dataflow Connections
@@ -116,14 +116,14 @@ graph TB
 
     Followup --> OutputContract
 
-    %% Class Definitions for Rich Visual Styling
-    classDef inputStyle fill:#0284c7,stroke:#0369a1,color:#ffffff,stroke-width:2px,font-weight:bold;
-    classDef fetcherStyle fill:#0d9488,stroke:#0f766e,color:#ffffff,stroke-width:2px;
-    classDef orchStyle fill:#6366f1,stroke:#4f46e5,color:#ffffff,stroke-width:2px;
-    classDef specStyle fill:#d97706,stroke:#b45309,color:#ffffff,stroke-width:2px;
-    classDef llmStyle fill:#ec4899,stroke:#be185d,color:#ffffff,stroke-width:2px,font-weight:bold;
-    classDef engineStyle fill:#059669,stroke:#047857,color:#ffffff,stroke-width:2px;
-    classDef outputStyle fill:#1e293b,stroke:#0f172a,color:#ffffff,stroke-width:2px;
+    %% Class Definitions with High-Contrast Dark Text & Distinct Colored Pastels
+    classDef inputStyle fill:#bae6fd,stroke:#0284c7,color:#0f172a,stroke-width:2px,font-weight:bold;
+    classDef fetcherStyle fill:#99f6e4,stroke:#0d9488,color:#0f172a,stroke-width:2px;
+    classDef orchStyle fill:#c7d2fe,stroke:#4f46e5,color:#0f172a,stroke-width:2px;
+    classDef specStyle fill:#fef08a,stroke:#ca8a04,color:#0f172a,stroke-width:2px;
+    classDef llmStyle fill:#fbcfe8,stroke:#db2777,color:#0f172a,stroke-width:2px,font-weight:bold;
+    classDef engineStyle fill:#a7f3d0,stroke:#059669,color:#0f172a,stroke-width:2px;
+    classDef outputStyle fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:2px;
 
     class Input inputStyle;
     class Fetcher,SSRF,Sanitiser fetcherStyle;
